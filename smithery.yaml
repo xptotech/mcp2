@@ -38,12 +38,12 @@ startCommand:
         "dist/index.js"
       ],
       "env": {
-        "MYSQL_HOST": config.MYSQL_HOST,
-        "MYSQL_PORT": config.MYSQL_PORT,
-        "MYSQL_USER": config.MYSQL_USER,
-        "MYSQL_PASSWORD": config.MYSQL_PASSWORD,
-        "MYSQL_DATABASE": config.MYSQL_DATABASE,
-        "MYSQL_READONLY": config.MYSQL_READONLY.toString()
+        MYSQL_HOST: config.MYSQL_HOST,
+        MYSQL_PORT: config.MYSQL_PORT,
+        MYSQL_USER: config.MYSQL_USER,
+        MYSQL_PASSWORD: config.MYSQL_PASSWORD,
+        MYSQL_DATABASE: config.MYSQL_DATABASE,
+        MYSQL_READONLY: config.MYSQL_READONLY.toString()
       }
     })
   exampleConfig:
