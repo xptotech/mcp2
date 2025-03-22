@@ -5,10 +5,77 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import * as mysql from "mysql2/promise";
 
+// Query type enum for categorizing SQL operations
+enum QueryType {
+  SELECT = "SELECT",
+  INSERT = "INSERT",
+  UPDATE = "UPDATE",
+  DELETE = "DELETE",
+  CREATE = "CREATE",
+  DROP = "DROP",
+  ALTER = "ALTER",
+  TRUNCATE = "TRUNCATE",
+  USE = "USE",
+  SHOW = "SHOW",
+  DESCRIBE = "DESCRIBE",
+  UNKNOWN = "UNKNOWN"
+}
+
+// Determine if query type is a write operation
+function isWriteOperation(queryType: QueryType): boolean {
+  const writeOperations = [
+    QueryType.INSERT,
+    QueryType.UPDATE,
+    QueryType.DELETE,
+    QueryType.CREATE,
+    QueryType.DROP,
+    QueryType.ALTER,
+    QueryType.TRUNCATE
+  ];
+  return writeOperations.includes(queryType);
+}
+
+// Get query type from SQL query
+function getQueryType(query: string): QueryType {
+  const firstWord = query.trim().split(/\s+/)[0].toUpperCase();
+  return Object.values(QueryType).includes(firstWord as QueryType)
+    ? (firstWord as QueryType)
+    : QueryType.UNKNOWN;
+}
+
 // MySQL connection manager class
 class MySQLConnectionManager {
   private connection: mysql.Connection | null = null;
   private config: mysql.ConnectionOptions = {};
+  private readonly: boolean = false;
+
+  constructor() {
+    // Read config from environment variables
+    this.loadConfigFromEnv();
+  }
+
+  // Load configuration from environment variables
+  private loadConfigFromEnv(): void {
+    this.config = {
+      host: process.env.MYSQL_HOST || "localhost",
+      port: parseInt(process.env.MYSQL_PORT || "3306", 10),
+      user: process.env.MYSQL_USER || "root",
+      password: process.env.MYSQL_PASSWORD || "",
+      database: process.env.MYSQL_DATABASE || undefined
+    };
+
+    // Set readonly mode
+    this.readonly =
+      (process.env.MYSQL_READONLY || "false").toLowerCase() === "true";
+
+    console.error(
+      `Config loaded from env: host=${this.config.host}, port=${
+        this.config.port
+      }, user=${this.config.user}, database=${
+        this.config.database || "none"
+      }, readonly=${this.readonly}`
+    );
+  }
 
   // Check connection status
   isConnected(): boolean {
@@ -18,7 +85,10 @@ class MySQLConnectionManager {
   // Get current connection information
   getConnectionInfo(): any {
     if (!this.isConnected()) {
-      return { connected: false };
+      return {
+        connected: false,
+        readonly: this.readonly
+      };
     }
 
     return {
@@ -26,8 +96,24 @@ class MySQLConnectionManager {
       host: this.config.host || "unknown",
       port: this.config.port || 3306,
       user: this.config.user || "unknown",
-      database: this.config.database || "none"
+      database: this.config.database || "none",
+      readonly: this.readonly
     };
+  }
+
+  // Ensure connection is established
+  private async ensureConnected(): Promise<void> {
+    if (!this.connection) {
+      try {
+        this.connection = await mysql.createConnection(this.config);
+        console.error(
+          `Connected to MySQL: ${this.config.host}:${this.config.port}`
+        );
+      } catch (error: any) {
+        console.error(`Connection error: ${error.message}`);
+        throw new Error(`Database connection failed: ${error.message}`);
+      }
+    }
   }
 
   // Connect to MySQL database
@@ -38,8 +124,8 @@ class MySQLConnectionManager {
         await this.disconnect();
       }
 
-      this.config = config;
-      this.connection = await mysql.createConnection(config);
+      this.config = { ...config };
+      await this.ensureConnected();
 
       return `Successfully connected to ${config.host}:${
         config.port || 3306
@@ -56,6 +142,7 @@ class MySQLConnectionManager {
         await this.connection.end();
         this.connection = null;
         this.config = {};
+        this.loadConfigFromEnv(); // Reload config from env after disconnect
         return "Database connection has been closed";
       }
       return "No active database connection";
@@ -66,6 +153,22 @@ class MySQLConnectionManager {
 
   // Execute SQL query
   async executeQuery(sql: string, params: any[] = []): Promise<any> {
+    // Validate read-only constraints
+    const queryType = getQueryType(sql);
+    if (this.readonly && isWriteOperation(queryType)) {
+      throw new Error(
+        "Server is in read-only mode. Write operations are not allowed."
+      );
+    }
+
+    // Handle special case for USE statements
+    if (queryType === QueryType.USE) {
+      return this.useDatabase(sql.trim().split(/\s+/)[1].replace(/[`'"]/g, ""));
+    }
+
+    // Ensure connection is established
+    await this.ensureConnected();
+
     if (!this.connection) {
       throw new Error(
         "Not connected to a database. Please use the 'connect' tool first."
@@ -74,14 +177,38 @@ class MySQLConnectionManager {
 
     try {
       const [rows] = await this.connection.execute(sql, params);
-      return rows;
+
+      // Format dates and special values if needed
+      return this.formatQueryResults(rows);
     } catch (error: any) {
       throw new Error(`Query execution failed: ${error.message}`);
     }
   }
 
+  // Format query results for better readability
+  private formatQueryResults(rows: any): any {
+    if (Array.isArray(rows)) {
+      return rows.map((row) => {
+        const formattedRow: any = {};
+        for (const [key, value] of Object.entries(row)) {
+          // Format Date objects to ISO string
+          if (value instanceof Date) {
+            formattedRow[key] = (value as Date).toISOString();
+          } else {
+            formattedRow[key] = value;
+          }
+        }
+        return formattedRow;
+      });
+    }
+    return rows;
+  }
+
   // Change database
   async useDatabase(database: string): Promise<string> {
+    // Ensure connection is established
+    await this.ensureConnected();
+
     if (!this.connection) {
       throw new Error(
         "Not connected to a database. Please use the 'connect' tool first."
@@ -95,6 +222,16 @@ class MySQLConnectionManager {
     } catch (error: any) {
       throw new Error(`Failed to change database: ${error.message}`);
     }
+  }
+
+  // Set readonly mode
+  setReadonlyMode(readonly: boolean): void {
+    this.readonly = readonly;
+  }
+
+  // Get readonly status
+  isReadonly(): boolean {
+    return this.readonly;
   }
 }
 
@@ -117,10 +254,15 @@ server.tool(
     let statusText = "";
 
     if (info.connected) {
-      statusText = `Connection status: Connected\nHost: ${info.host}\nPort: ${info.port}\nUser: ${info.user}\nDatabase: ${info.database}`;
+      statusText = `Connection status: Connected\nHost: ${info.host}\nPort: ${
+        info.port
+      }\nUser: ${info.user}\nDatabase: ${info.database}\nRead-only mode: ${
+        info.readonly ? "Enabled" : "Disabled"
+      }`;
     } else {
-      statusText =
-        "Connection status: Not connected\nUse the 'connect' tool to connect to a database.";
+      statusText = `Connection status: Not connected\nUse the 'connect' tool to connect to a database.\nRead-only mode: ${
+        info.readonly ? "Enabled" : "Disabled"
+      }`;
     }
 
     return {
@@ -371,13 +513,71 @@ server.tool(
   }
 );
 
+// Register set_readonly tool
+server.tool(
+  "set_readonly",
+  "Enable or disable read-only mode",
+  {
+    readonly: z
+      .boolean()
+      .describe("Set to true to enable read-only mode, false to disable")
+  },
+  async ({ readonly }) => {
+    dbManager.setReadonlyMode(readonly);
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Read-only mode ${readonly ? "enabled" : "disabled"}`
+        }
+      ]
+    };
+  }
+);
+
+// Parse the command line arguments
+function parseCliArgs() {
+  const args = process.argv.slice(2);
+  let configArg = args.indexOf("--config");
+
+  if (configArg !== -1 && args.length > configArg + 1) {
+    try {
+      const config = JSON.parse(args[configArg + 1]);
+
+      // Set environment variables from config
+      for (const [key, value] of Object.entries(config)) {
+        process.env[key] = String(value);
+      }
+
+      console.error("Loaded configuration:", config);
+    } catch (error) {
+      console.error("Failed to parse config argument:", error);
+    }
+  }
+}
+
 // Start server
 async function main() {
+  // Parse command line arguments first
+  parseCliArgs();
+
   // Get default connection info from environment variables
   const defaultHost = process.env.MYSQL_HOST;
   const defaultUser = process.env.MYSQL_USER;
   const defaultPassword = process.env.MYSQL_PASSWORD;
   const defaultDatabase = process.env.MYSQL_DATABASE;
+  const defaultReadonly =
+    (process.env.MYSQL_READONLY || "false").toLowerCase() === "true";
+
+  console.error(
+    `Environment values: host=${defaultHost}, user=${defaultUser}, database=${
+      defaultDatabase || "none"
+    }, readonly=${defaultReadonly}`
+  );
+
+  // Set readonly mode
+  dbManager.setReadonlyMode(defaultReadonly);
 
   // Attempt auto-connection if environment variables are available
   if (defaultHost && defaultUser !== undefined) {
