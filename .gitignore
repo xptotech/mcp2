@@ -1,0 +1,30 @@
+# 빌드 출력
+dist/
+build/
+
+# 의존성
+node_modules/
+
+# 로그
+logs/
+
+# 환경 변수
+.env
+.env.local
+
+# IDE 설정
+.idea/
+.vscode/
+
+# 운영체제 파일
+.DS_Store
+Thumbs.db
+
+npm-debug.log
+*.log
+
+coverage/
+
+tmp/ 
+
+.cursor/

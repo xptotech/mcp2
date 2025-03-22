@@ -1,0 +1,53 @@
+{
+  "name": "mysql-mcp-connect",
+  "version": "0.0.9",
+  "description": "MySQL MCP 서버 - Model Context Protocol로 MySQL 데이터베이스에 접근하는 도구",
+  "main": "dist/index.js",
+  "bin": {
+    "mysql-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "public"
+  ],
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "stdio": "node dist/index.js --stdio",
+    "stdio:dev": "ts-node src/index.ts --stdio",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "mysql",
+    "cursor",
+    "model-context-protocol",
+    "database",
+    "ai",
+    "tool"
+  ],
+  "author": "sussa3007",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "express-sse": "^0.5.3",
+    "mysql2": "^3.14.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/content-type": "^1.1.8",
+    "@types/cors": "^2.8.13",
+    "@types/express": "^4.17.17",
+    "@types/node": "^20.3.1",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.1.3"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
