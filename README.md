@@ -151,23 +151,6 @@ Switch to a different database.
   - database (string): Name of the database to switch to
 - **Returns**: Confirmation message or error details.
 
-## Docker Deployment
-
-Dockerfile을 사용하여 컨테이너로 실행할 수 있습니다:
-
-```bash
-# 이미지 빌드
-docker build -t mysql-mcp .
-
-# 컨테이너 실행
-docker run -it \
-  -e MYSQL_HOST=your_host \
-  -e MYSQL_PORT=3306 \
-  -e MYSQL_USER=your_user \
-  -e MYSQL_PASSWORD=your_password \
-  -e MYSQL_DATABASE=your_database \
-  mysql-mcp
-```
 
 ## Keywords
 
