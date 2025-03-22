@@ -5,14 +5,17 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import * as mysql from "mysql2/promise";
 
+// MySQL connection manager class
 class MySQLConnectionManager {
   private connection: mysql.Connection | null = null;
   private config: mysql.ConnectionOptions = {};
 
+  // Check connection status
   isConnected(): boolean {
     return this.connection !== null;
   }
 
+  // Get current connection information
   getConnectionInfo(): any {
     if (!this.isConnected()) {
       return { connected: false };
@@ -27,8 +30,10 @@ class MySQLConnectionManager {
     };
   }
 
+  // Connect to MySQL database
   async connect(config: mysql.ConnectionOptions): Promise<string> {
     try {
+      // If already connected, disconnect first
       if (this.connection) {
         await this.disconnect();
       }
@@ -36,32 +41,34 @@ class MySQLConnectionManager {
       this.config = config;
       this.connection = await mysql.createConnection(config);
 
-      return `성공적으로 ${config.host}:${config.port || 3306}의 ${
-        config.database || "MySQL"
-      }에 연결되었습니다.`;
+      return `Successfully connected to ${config.host}:${
+        config.port || 3306
+      } database: ${config.database || "MySQL"}`;
     } catch (error: any) {
-      return `데이터베이스 연결 실패: ${error.message}`;
+      return `Database connection failed: ${error.message}`;
     }
   }
 
+  // Disconnect from the database
   async disconnect(): Promise<string> {
     try {
       if (this.connection) {
         await this.connection.end();
         this.connection = null;
         this.config = {};
-        return "데이터베이스 연결이 해제되었습니다.";
+        return "Database connection has been closed";
       }
-      return "현재 연결된 데이터베이스가 없습니다.";
+      return "No active database connection";
     } catch (error: any) {
-      return `연결 해제 실패: ${error.message}`;
+      return `Disconnection failed: ${error.message}`;
     }
   }
 
+  // Execute SQL query
   async executeQuery(sql: string, params: any[] = []): Promise<any> {
     if (!this.connection) {
       throw new Error(
-        "데이터베이스에 연결되어 있지 않습니다. 먼저 'connect' 도구를 사용하세요."
+        "Not connected to a database. Please use the 'connect' tool first."
       );
     }
 
@@ -69,70 +76,80 @@ class MySQLConnectionManager {
       const [rows] = await this.connection.execute(sql, params);
       return rows;
     } catch (error: any) {
-      throw new Error(`쿼리 실행 실패: ${error.message}`);
+      throw new Error(`Query execution failed: ${error.message}`);
     }
   }
 
+  // Change database
   async useDatabase(database: string): Promise<string> {
     if (!this.connection) {
       throw new Error(
-        "데이터베이스에 연결되어 있지 않습니다. 먼저 'connect' 도구를 사용하세요."
+        "Not connected to a database. Please use the 'connect' tool first."
       );
     }
 
     try {
       await this.connection.execute(`USE \`${database}\``);
       this.config.database = database;
-      return `데이터베이스가 '${database}'로 변경되었습니다.`;
+      return `Database changed to '${database}'`;
     } catch (error: any) {
-      throw new Error(`데이터베이스 변경 실패: ${error.message}`);
+      throw new Error(`Failed to change database: ${error.message}`);
     }
   }
 }
 
+// Create server instance
 const server = new McpServer({
   name: "mysql",
   version: "1.0.0"
 });
-  
+
+// Create MySQL connection manager instance
 const dbManager = new MySQLConnectionManager();
 
-server.tool("status", "현재 데이터베이스 연결 상태 확인", {}, async () => {
-  const info = dbManager.getConnectionInfo();
-  let statusText = "";
+// Register status tool
+server.tool(
+  "status",
+  "Check current database connection status",
+  {},
+  async () => {
+    const info = dbManager.getConnectionInfo();
+    let statusText = "";
 
-  if (info.connected) {
-    statusText = `연결 상태: 연결됨\n호스트: ${info.host}\n포트: ${info.port}\n사용자: ${info.user}\n데이터베이스: ${info.database}`;
-  } else {
-    statusText =
-      "연결 상태: 연결되지 않음\n'connect' 도구를 사용하여 데이터베이스에 연결하세요.";
+    if (info.connected) {
+      statusText = `Connection status: Connected\nHost: ${info.host}\nPort: ${info.port}\nUser: ${info.user}\nDatabase: ${info.database}`;
+    } else {
+      statusText =
+        "Connection status: Not connected\nUse the 'connect' tool to connect to a database.";
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: statusText
+        }
+      ]
+    };
   }
+);
 
-  return {
-    content: [
-      {
-        type: "text",
-        text: statusText
-      }
-    ]
-  };
-});
-
+// Register connect tool
 server.tool(
   "connect",
-  "MySQL 데이터베이스에 연결",
+  "Connect to a MySQL database",
   {
     host: z
       .string()
       .default("localhost")
-      .describe("데이터베이스 서버 호스트명 또는 IP 주소"),
-    port: z.string().default("3306").describe("데이터베이스 서버 포트"),
-    user: z.string().default("root").describe("데이터베이스 사용자명"),
-    password: z.string().default("").describe("데이터베이스 비밀번호"),
+      .describe("Database server hostname or IP address"),
+    port: z.string().default("3306").describe("Database server port"),
+    user: z.string().default("root").describe("Database username"),
+    password: z.string().default("").describe("Database password"),
     database: z
       .string()
       .optional()
-      .describe("연결할 데이터베이스 이름 (선택 사항)")
+      .describe("Database name to connect to (optional)")
   },
   async ({ host, port, user, password, database }) => {
     const result = await dbManager.connect({
@@ -154,28 +171,35 @@ server.tool(
   }
 );
 
-server.tool("disconnect", "현재 MySQL 데이터베이스 연결 종료", {}, async () => {
-  const result = await dbManager.disconnect();
+// Register disconnect tool
+server.tool(
+  "disconnect",
+  "Close the current MySQL database connection",
+  {},
+  async () => {
+    const result = await dbManager.disconnect();
 
-  return {
-    content: [
-      {
-        type: "text",
-        text: result
-      }
-    ]
-  };
-});
+    return {
+      content: [
+        {
+          type: "text",
+          text: result
+        }
+      ]
+    };
+  }
+);
 
+// Register query tool
 server.tool(
   "query",
-  "연결된 데이터베이스에서 SQL 쿼리 실행",
+  "Execute an SQL query on the connected database",
   {
-    sql: z.string().describe("실행할 SQL 쿼리"),
+    sql: z.string().describe("SQL query to execute"),
     params: z
       .array(z.any())
       .optional()
-      .describe("준비된 문장의 매개변수 (선택 사항)")
+      .describe("Parameters for prepared statements (optional)")
   },
   async ({ sql, params = [] }) => {
     try {
@@ -185,7 +209,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `쿼리 실행 결과:\n${JSON.stringify(results, null, 2)}`
+            text: `Query results:\n${JSON.stringify(results, null, 2)}`
           }
         ]
       };
@@ -202,9 +226,10 @@ server.tool(
   }
 );
 
+// Register list_tables tool
 server.tool(
   "list_tables",
-  "현재 데이터베이스의 테이블 목록 가져오기",
+  "Get a list of tables in the current database",
   {},
   async () => {
     try {
@@ -215,7 +240,7 @@ server.tool(
           content: [
             {
               type: "text",
-              text: "현재 데이터베이스에 테이블이 없습니다."
+              text: "No tables found in the current database"
             }
           ]
         };
@@ -229,7 +254,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `테이블 목록:\n${tableNames}`
+            text: `Tables list:\n${tableNames}`
           }
         ]
       };
@@ -246,11 +271,12 @@ server.tool(
   }
 );
 
+// Register describe_table tool
 server.tool(
   "describe_table",
-  "특정 테이블의 구조 가져오기",
+  "Get the structure of a specific table",
   {
-    table: z.string().describe("구조를 확인할 테이블 이름")
+    table: z.string().describe("Name of the table to describe")
   },
   async ({ table }) => {
     try {
@@ -260,7 +286,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `'${table}' 테이블 구조:\n${JSON.stringify(
+            text: `'${table}' table structure:\n${JSON.stringify(
               structure,
               null,
               2
@@ -281,9 +307,10 @@ server.tool(
   }
 );
 
+// Register list_databases tool
 server.tool(
   "list_databases",
-  "서버에서 액세스 가능한 모든 데이터베이스 목록 가져오기",
+  "Get a list of all accessible databases on the server",
   {},
   async () => {
     try {
@@ -295,7 +322,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `데이터베이스 목록:\n${dbNames}`
+            text: `Databases list:\n${dbNames}`
           }
         ]
       };
@@ -312,11 +339,12 @@ server.tool(
   }
 );
 
+// Register use_database tool
 server.tool(
   "use_database",
-  "다른 데이터베이스로 전환",
+  "Switch to a different database",
   {
-    database: z.string().describe("전환할 데이터베이스 이름")
+    database: z.string().describe("Name of the database to switch to")
   },
   async ({ database }) => {
     try {
@@ -343,12 +371,15 @@ server.tool(
   }
 );
 
+// Start server
 async function main() {
+  // Get default connection info from environment variables
   const defaultHost = process.env.MYSQL_HOST;
   const defaultUser = process.env.MYSQL_USER;
   const defaultPassword = process.env.MYSQL_PASSWORD;
   const defaultDatabase = process.env.MYSQL_DATABASE;
 
+  // Attempt auto-connection if environment variables are available
   if (defaultHost && defaultUser !== undefined) {
     try {
       await dbManager.connect({
@@ -358,18 +389,18 @@ async function main() {
         password: defaultPassword || "",
         database: defaultDatabase
       });
-      console.error(`MySQL(${defaultHost})에 자동으로 연결되었습니다.`);
+      console.error(`Automatically connected to MySQL(${defaultHost})`);
     } catch (error) {
-      console.error("자동 연결 실패:", error);
+      console.error("Auto-connection failed:", error);
     }
   }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("MySQL MCP 서버가 stdio에서 실행 중입니다");
+  console.error("MySQL MCP Server running on stdio");
 }
 
 main().catch((error) => {
-  console.error("main()에서 치명적인 오류 발생:", error);
+  console.error("Fatal error in main():", error);
   process.exit(1);
 });

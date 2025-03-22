@@ -1,3 +1,5 @@
+[![smithery badge](https://smithery.ai/badge/@sussa3007/mysql-mcp)](https://smithery.ai/server/@sussa3007/mysql-mcp)
+
 # MySQL MCP Server
 
 A Model Context Protocol (MCP) server for MySQL databases that enables AI models to interact with MySQL databases through a structured interface.
