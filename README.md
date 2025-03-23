@@ -1,8 +1,7 @@
 [![smithery badge](https://smithery.ai/badge/@sussa3007/mysql-mcp)](https://smithery.ai/server/@sussa3007/mysql-mcp)
 
-
-
 # MySQL MCP Server
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A Model Context Protocol (MCP) server for MySQL databases that enables AI models to interact with MySQL databases through a structured interface.
@@ -155,7 +154,6 @@ Switch to a different database.
 - **Inputs**:
   - database (string): Name of the database to switch to
 - **Returns**: Confirmation message or error details.
-
 
 ## Keywords
 

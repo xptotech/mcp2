@@ -1,10 +1,11 @@
 {
   "name": "mysql-mcp-connect",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "description": "MySQL MCP 서버 - Model Context Protocol로 MySQL 데이터베이스에 접근하는 도구",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
-    "mysql-mcp": "dist/index.js"
+    "mysql-mcp": "./dist/index.js"
   },
   "files": [
     "dist",
@@ -33,7 +34,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.7.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.0.3",
+    "dotenv": "^16.4.7",
     "express": "^4.18.2",
     "express-sse": "^0.5.3",
     "mysql2": "^3.14.0",
