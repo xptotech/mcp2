@@ -251,6 +251,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 host: newConfig.host,
                 port: newConfig.port,
                 user: newConfig.user,
+                password: newConfig.password,
                 database: newConfig.database
               },
               null,
