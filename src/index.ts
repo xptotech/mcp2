@@ -12,55 +12,17 @@ const logger = {
   error: (message: string) => console.error(`[ERROR] ${message}`),
   debug: (message: string) => console.debug(`[DEBUG] ${message}`)
 };
-// Load environment variables from .env file and command line arguments
 
-class DBInfo {
-  host: string;
-  port: number;
-  user: string;
-  password: string;
-  database: string;
-  readonly?: boolean;
 
-  constructor(config: Record<string, any>) {
-    this.host = config.MYSQL_HOST || "localhost";
-    this.port = parseInt(config.MYSQL_PORT || "3306", 10);
-    this.user = config.MYSQL_USER || "root";
-    this.password = config.MYSQL_PASSWORD || "";
-    this.database = config.MYSQL_DATABASE || "";
-    this.readonly = config.MYSQL_READONLY || false;
-  }
-}
-function loadEnvironmentVariables() {
-  // Parse command line arguments
-  const args = process.argv.slice(2);
-  const configIndex = args.findIndex((arg) => arg === "--config");
-
-  if (configIndex !== -1 && configIndex + 1 < args.length) {
-    try {
-      const config = JSON.parse(args[configIndex + 1]);
-
-      logger.info("Loaded configuration from command line arguments");
-      return new DBInfo(config);
-    } catch (error) {
-      logger.error(`Failed to parse config JSON: ${error}`);
-    }
-  }
-  // 기본값 반환
-  return new DBInfo({});
-}
-
-// Load environment variables before anything else
-const dbInfo = loadEnvironmentVariables();
 
 // Global connection state
 let connection: Connection | null = null;
 let connectionConfig = {
-  host: dbInfo.host,
-  port: dbInfo.port,
-  user: dbInfo.user,
-  password: dbInfo.password,
-  database: dbInfo.database
+  host: process.env.MYSQL_HOST || "localhost",
+  port: parseInt(process.env.MYSQL_PORT || "3306", 10),
+  user: process.env.MYSQL_USER || "root",
+  password: process.env.MYSQL_PASSWORD || "",
+  database: process.env.MYSQL_DATABASE || ""
 };
 
 // Initialize MCP server
@@ -230,10 +192,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   {
                     connected: false,
                     message: "Database not connected. Need to use 'connect' tool after checking current environment variable information",
-                    host: connectionConfig.host,
-                    port: connectionConfig.port,
-                    user: connectionConfig.user,
-                    database: connectionConfig.database
+                    host: process.env.MYSQL_HOST || "localhost",
+                    port: parseInt(process.env.MYSQL_PORT || "3306", 10),
+                    user: process.env.MYSQL_USER || "root",
+                    database: process.env.MYSQL_DATABASE || ""
                   },
                   null,
                   2
