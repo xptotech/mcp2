@@ -223,7 +223,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "status": {
         if (!connection) {
           return {
-            content: [{ type: "text", text: "Database not connected" }],
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    connected: false,
+                    message: "Database not connected. Need to use 'connect' tool after checking current environment variable information",
+                    host: connectionConfig.host,
+                    port: connectionConfig.port,
+                    user: connectionConfig.user,
+                    database: connectionConfig.database
+                  },
+                  null,
+                  2
+                )
+              }
+            ],
             isError: false
           };
         }
@@ -234,7 +250,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text",
               text: JSON.stringify(
                 {
-                  connected: !!connection,
+                  connected: true,
                   host: connectionConfig.host,
                   port: connectionConfig.port,
                   user: connectionConfig.user,
@@ -399,7 +415,6 @@ async function main() {
   logger.info("Server connected to transport");
 
   // 데이터베이스 연결 추가
-  connection = await connectToDatabase(connectionConfig);
 }
 
 // Handle termination signals
