@@ -75,7 +75,6 @@ const server = new Server(
     }
   }
 );
-connectToDatabase(connectionConfig);
 
 // Helper function to get current connection or throw error if not connected
 async function getConnection(): Promise<Connection> {
@@ -398,6 +397,9 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info("Server connected to transport");
+
+  // 데이터베이스 연결 추가
+  connection = await connectToDatabase(connectionConfig);
 }
 
 // Handle termination signals
