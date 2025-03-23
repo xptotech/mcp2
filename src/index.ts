@@ -191,11 +191,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 text: JSON.stringify(
                   {
                     connected: false,
-                    message: "Database not connected. Need to use 'connect' tool after checking current environment variable information. ",
-                    host: process.env.MYSQL_HOST || "localhost",
-                    port: parseInt(process.env.MYSQL_PORT || "3306", 10),
-                    user: process.env.MYSQL_USER || "root",
-                    database: process.env.MYSQL_DATABASE || ""
+                    message: "Database not connected. Need to use 'connect' tool after checking current environment variable information. The password is sensitive information and is stored in an environment variable, so it is not required in the request parameters.",
+                    host: connectionConfig.host,
+                    port: connectionConfig.port,
+                    user: connectionConfig.user,
+                    database: connectionConfig.database
                   },
                   null,
                   2
@@ -247,7 +247,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [{ type: "text", text: JSON.stringify(
               {
                 connected: false,
-                message: "Database not connected. Need to use 'connect' tool after checking current environment variable information.",
+                message: "Database connection failed, please request with new information or check the environment variable information.",
                 host: newConfig.host,
                 port: newConfig.port,
                 user: newConfig.user,
