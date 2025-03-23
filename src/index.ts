@@ -1,572 +1,400 @@
-#!/usr/bin/env node
-
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import * as mysql from "mysql2/promise";
-import * as dotenv from "dotenv";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema
+} from "@modelcontextprotocol/sdk/types.js";
+import { createConnection, Connection, RowDataPacket } from 'mysql2/promise';
+import * as dotenv from 'dotenv';
+import { parseArgs } from 'node:util';
 
-// 환경 변수 로드
-dotenv.config();
+// Set up logging
+const logger = {
+  info: (message: string) => console.log(`[INFO] ${message}`),
+  error: (message: string) => console.error(`[ERROR] ${message}`),
+  debug: (message: string) => console.debug(`[DEBUG] ${message}`)
+};
 
-// 디버깅용 로그 함수
-function logDebug(message: string, data?: any) {
-  console.error(`[DEBUG] ${message}`, data ? JSON.stringify(data) : "");
+// Load environment variables from .env file and command line arguments
+function loadEnvironmentVariables() {
+  // Load from .env file
+  dotenv.config();
+  
+  // Parse command line arguments
+  const args = process.argv.slice(2);
+  const configIndex = args.findIndex(arg => arg === '--config');
+  
+  if (configIndex !== -1 && configIndex + 1 < args.length) {
+    try {
+      const config = JSON.parse(args[configIndex + 1]);
+      // Set environment variables from config
+      for (const [key, value] of Object.entries(config)) {
+        process.env[key] = value as string;
+      }
+      logger.info('Loaded configuration from command line arguments');
+    } catch (error) {
+      logger.error(`Failed to parse config JSON: ${error}`);
+    }
+  }
 }
 
-// 초기 환경 변수 로깅
-logDebug("Initial Environment Variables:", {
-  MYSQL_HOST: process.env.MYSQL_HOST,
-  MYSQL_PORT: process.env.MYSQL_PORT,
-  MYSQL_USER: process.env.MYSQL_USER,
-  MYSQL_DATABASE: process.env.MYSQL_DATABASE,
-  MYSQL_READONLY: process.env.MYSQL_READONLY
+// Load environment variables before anything else
+loadEnvironmentVariables();
+
+// Global connection state
+let connection: Connection | null = null;
+let connectionConfig = {
+  host: process.env.MYSQL_HOST || 'localhost',
+  port: parseInt(process.env.MYSQL_PORT || '3306'),
+  user: process.env.MYSQL_USER || 'root',
+  password: process.env.MYSQL_PASSWORD || '',
+  database: process.env.MYSQL_DATABASE || ''
+};
+
+// Initialize MCP server
+const server = new Server(
+  {
+    name: "mysql-mcp",
+    version: "0.1.0",
+  },
+  {
+    capabilities: {
+      tools: {},
+    },
+  },
+);
+
+// Helper function to get current connection or throw error if not connected
+async function getConnection(): Promise<Connection> {
+  if (!connection) {
+    throw new Error("Database not connected. Use 'connect' tool first.");
+  }
+  return connection;
+}
+
+// Connect to MySQL with current config
+async function connectToDatabase(config = connectionConfig): Promise<Connection> {
+  try {
+    if (connection) {
+      logger.info('Closing existing connection before creating a new one');
+      await connection.end();
+    }
+    
+    connection = await createConnection({
+      host: config.host,
+      port: config.port,
+      user: config.user,
+      password: config.password,
+      database: config.database,
+      multipleStatements: true, // Allow multiple statements in one query
+    });
+    
+    connectionConfig = config;
+    logger.info(`Connected to MySQL database at ${config.host}:${config.port}`);
+    return connection;
+  } catch (error) {
+    logger.error(`Failed to connect to database: ${error}`);
+    throw error;
+  }
+}
+
+// Define available tools
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return {
+    tools: [
+      {
+        name: "status",
+        description: "Check the current database connection status.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "connect",
+        description: "Connect to a MySQL database.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            host: { type: "string", description: "Database server hostname or IP address" },
+            port: { type: "string", description: "Database server port" },
+            user: { type: "string", description: "Database username" },
+            password: { type: "string", description: "Database password" },
+            database: { type: "string", description: "Database name to connect to" },
+          },
+        },
+      },
+      {
+        name: "disconnect",
+        description: "Close the current MySQL database connection.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "query",
+        description: "Execute an SQL query on the connected database.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sql: { type: "string", description: "SQL query to execute" },
+            params: { 
+              type: "array", 
+              description: "Parameters for prepared statements",
+              items: { type: "string" }
+            },
+          },
+          required: ["sql"],
+        },
+      },
+      {
+        name: "list_tables",
+        description: "Get a list of tables in the current database.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "describe_table",
+        description: "Get the structure of a specific table.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            table: { type: "string", description: "Name of the table to describe" },
+          },
+          required: ["table"],
+        },
+      },
+      {
+        name: "list_databases",
+        description: "Get a list of all accessible databases on the server.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "use_database",
+        description: "Switch to a different database.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            database: { type: "string", description: "Name of the database to switch to" },
+          },
+          required: ["database"],
+        },
+      },
+    ],
+  };
 });
 
-// Query type enum for categorizing SQL operations
-enum QueryType {
-  SELECT = "SELECT",
-  INSERT = "INSERT",
-  UPDATE = "UPDATE",
-  DELETE = "DELETE",
-  CREATE = "CREATE",
-  DROP = "DROP",
-  ALTER = "ALTER",
-  TRUNCATE = "TRUNCATE",
-  USE = "USE",
-  SHOW = "SHOW",
-  DESCRIBE = "DESCRIBE",
-  UNKNOWN = "UNKNOWN"
-}
-
-// Determine if query type is a write operation
-function isWriteOperation(queryType: QueryType): boolean {
-  const writeOperations = [
-    QueryType.INSERT,
-    QueryType.UPDATE,
-    QueryType.DELETE,
-    QueryType.CREATE,
-    QueryType.DROP,
-    QueryType.ALTER,
-    QueryType.TRUNCATE
-  ];
-  return writeOperations.includes(queryType);
-}
-
-// Get query type from SQL query
-function getQueryType(query: string): QueryType {
-  const firstWord = query.trim().split(/\s+/)[0].toUpperCase();
-  return Object.values(QueryType).includes(firstWord as QueryType)
-    ? (firstWord as QueryType)
-    : QueryType.UNKNOWN;
-}
-
-// MySQL connection manager class
-class MySQLConnectionManager {
-  private connection: mysql.Connection | null = null;
-  private config: mysql.ConnectionOptions = {};
-  private readonly: boolean = false;
-
-  constructor() {
-    // Read config from environment variables
-    this.loadConfigFromEnv();
-  }
-
-  // Load configuration from environment variables
-  private loadConfigFromEnv(): void {
-    this.config = {
-      host: process.env.MYSQL_HOST || "localhost",
-      port: parseInt(process.env.MYSQL_PORT || "3306", 10),
-      user: process.env.MYSQL_USER || "root",
-      password: process.env.MYSQL_PASSWORD || "",
-      database: process.env.MYSQL_DATABASE || undefined
-    };
-
-    // Set readonly mode
-    this.readonly =
-      (process.env.MYSQL_READONLY || "false").toLowerCase() === "true";
-
-    logDebug("Config loaded from env:", {
-      host: this.config.host,
-      port: this.config.port,
-      user: this.config.user,
-      database: this.config.database || "none",
-      readonly: this.readonly
-    });
-  }
-
-  // Check connection status
-  isConnected(): boolean {
-    return this.connection !== null;
-  }
-
-  // Get current connection information
-  getConnectionInfo(): any {
-    if (!this.isConnected()) {
-      return {
-        connected: false,
-        readonly: this.readonly
-      };
-    }
-
-    return {
-      connected: true,
-      host: this.config.host || "unknown",
-      port: this.config.port || 3306,
-      user: this.config.user || "unknown",
-      database: this.config.database || "none",
-      readonly: this.readonly
-    };
-  }
-
-  // Ensure connection is established
-  private async ensureConnected(): Promise<void> {
-    if (!this.connection) {
-      try {
-        logDebug("Attempting to connect with:", this.config);
-        this.connection = await mysql.createConnection(this.config);
-        logDebug(`Connected to MySQL: ${this.config.host}:${this.config.port}`);
-      } catch (error: any) {
-        logDebug(`Connection error:`, error);
-        throw new Error(`Database connection failed: ${error.message}`);
-      }
-    }
-  }
-
-  // Connect to MySQL database
-  async connect(config: mysql.ConnectionOptions): Promise<string> {
-    try {
-      // If already connected, disconnect first
-      if (this.connection) {
-        await this.disconnect();
-      }
-
-      this.config = { ...config };
-      logDebug("Connecting with config:", this.config);
-      await this.ensureConnected();
-
-      return `Successfully connected to ${config.host}:${
-        config.port || 3306
-      } database: ${config.database || "MySQL"}`;
-    } catch (error: any) {
-      logDebug("Connection failed:", error);
-      return `Database connection failed: ${error.message}`;
-    }
-  }
-
-  // Disconnect from the database
-  async disconnect(): Promise<string> {
-    try {
-      if (this.connection) {
-        await this.connection.end();
-        this.connection = null;
-        this.config = {};
-        this.loadConfigFromEnv(); // Reload config from env after disconnect
-        return "Database connection has been closed";
-      }
-      return "No active database connection";
-    } catch (error: any) {
-      return `Disconnection failed: ${error.message}`;
-    }
-  }
-
-  // Execute SQL query
-  async executeQuery(sql: string, params: any[] = []): Promise<any> {
-    // Validate read-only constraints
-    const queryType = getQueryType(sql);
-    if (this.readonly && isWriteOperation(queryType)) {
-      throw new Error(
-        "Server is in read-only mode. Write operations are not allowed."
-      );
-    }
-
-    // Handle special case for USE statements
-    if (queryType === QueryType.USE) {
-      return this.useDatabase(sql.trim().split(/\s+/)[1].replace(/[`'"]/g, ""));
-    }
-
-    // Ensure connection is established
-    await this.ensureConnected();
-
-    if (!this.connection) {
-      throw new Error(
-        "Not connected to a database. Please use the 'connect' tool first."
-      );
-    }
-
-    try {
-      logDebug(`Executing query: ${sql}`, params);
-      const [rows] = await this.connection.execute(sql, params);
-
-      // Format dates and special values if needed
-      return this.formatQueryResults(rows);
-    } catch (error: any) {
-      logDebug("Query execution failed:", error);
-      throw new Error(`Query execution failed: ${error.message}`);
-    }
-  }
-
-  // Format query results for better readability
-  private formatQueryResults(rows: any): any {
-    if (Array.isArray(rows)) {
-      return rows.map((row) => {
-        const formattedRow: any = {};
-        for (const [key, value] of Object.entries(row)) {
-          // Format Date objects to ISO string
-          if (value instanceof Date) {
-            formattedRow[key] = (value as Date).toISOString();
-          } else {
-            formattedRow[key] = value;
-          }
+// Handle tool calls
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  try {
+    switch (request.params.name) {
+      case "status": {
+        if (!connection) {
+          return {
+            content: [{ type: "text", text: "Database not connected" }],
+            isError: false,
+          };
         }
-        return formattedRow;
-      });
-    }
-    return rows;
-  }
-
-  // Change database
-  async useDatabase(database: string): Promise<string> {
-    // Ensure connection is established
-    await this.ensureConnected();
-
-    if (!this.connection) {
-      throw new Error(
-        "Not connected to a database. Please use the 'connect' tool first."
-      );
-    }
-
-    try {
-      await this.connection.execute(`USE \`${database}\``);
-      this.config.database = database;
-      logDebug(`Database changed to: ${database}`);
-      return `Database changed to '${database}'`;
-    } catch (error: any) {
-      logDebug("Failed to change database:", error);
-      throw new Error(`Failed to change database: ${error.message}`);
-    }
-  }
-
-  // Set readonly mode
-  setReadonlyMode(readonly: boolean): void {
-    this.readonly = readonly;
-    logDebug(`Read-only mode set to: ${readonly}`);
-  }
-
-  // Get readonly status
-  isReadonly(): boolean {
-    return this.readonly;
-  }
-}
-
-// Create server instance
-const server = new McpServer({
-  name: "mysql",
-  version: "1.0.0"
-});
-
-// Create MySQL connection manager instance
-const dbManager = new MySQLConnectionManager();
-
-// Register status tool
-server.tool(
-  "status",
-  "Check current database connection status",
-  {},
-  async () => {
-    const info = dbManager.getConnectionInfo();
-    let statusText = "";
-
-    if (info.connected) {
-      statusText = `Connection status: Connected\nHost: ${info.host}\nPort: ${
-        info.port
-      }\nUser: ${info.user}\nDatabase: ${info.database}\nRead-only mode: ${
-        info.readonly ? "Enabled" : "Disabled"
-      }`;
-    } else {
-      statusText = `Connection status: Not connected\nUse the 'connect' tool to connect to a database.\nRead-only mode: ${
-        info.readonly ? "Enabled" : "Disabled"
-      }`;
-    }
-
-    logDebug("Status requested:", info);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: statusText
-        }
-      ]
-    };
-  }
-);
-
-// Register connect tool
-server.tool(
-  "connect",
-  "Connect to a MySQL database",
-  {
-    host: dbManager.getConnectionInfo().host,
-    port: dbManager.getConnectionInfo().port,
-    user: dbManager.getConnectionInfo().user,
-    password: dbManager.getConnectionInfo().password,
-    database: dbManager.getConnectionInfo().database
-  },
-  async ({ host, port, user, password, database }) => {
-    logDebug("Connect tool called with:", { host, port, user, database });
-
-    const result = await dbManager.connect({
-      host,
-      port: parseInt(port, 10),
-      user,
-      password,
-      database
-    });
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: result
-        }
-      ]
-    };
-  }
-);
-
-// Register disconnect tool
-server.tool(
-  "disconnect",
-  "Close the current MySQL database connection",
-  {},
-  async () => {
-    const result = await dbManager.disconnect();
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: result
-        }
-      ]
-    };
-  }
-);
-
-// Register query tool
-server.tool(
-  "query",
-  "Execute an SQL query on the connected database",
-  {
-    sql: z.string().describe("SQL query to execute"),
-    params: z
-      .array(z.any())
-      .optional()
-      .describe("Parameters for prepared statements (optional)")
-  },
-  async ({ sql, params = [] }) => {
-    try {
-      const results = await dbManager.executeQuery(sql, params);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Query results:\n${JSON.stringify(results, null, 2)}`
-          }
-        ]
-      };
-    } catch (error: any) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: error.message
-          }
-        ]
-      };
-    }
-  }
-);
-
-// Register list_tables tool
-server.tool(
-  "list_tables",
-  "Get a list of tables in the current database",
-  {},
-  async () => {
-    try {
-      const tables = await dbManager.executeQuery("SHOW TABLES");
-
-      if (tables.length === 0) {
+        
         return {
-          content: [
-            {
-              type: "text",
-              text: "No tables found in the current database"
-            }
-          ]
+          content: [{ 
+            type: "text", 
+            text: JSON.stringify({
+              connected: !!connection,
+              host: connectionConfig.host,
+              port: connectionConfig.port,
+              user: connectionConfig.user,
+              database: connectionConfig.database,
+              threadId: connection.threadId
+            }, null, 2) 
+          }],
+          isError: false,
         };
       }
 
-      const tableNames = tables
-        .map((row: any) => Object.values(row)[0])
-        .join("\n");
+      case "connect": {
+        const args = request.params.arguments || {};
+        const newConfig = {
+          host: args.host as string || connectionConfig.host,
+          port: parseInt(args.port as string || connectionConfig.port.toString()),
+          user: args.user as string || connectionConfig.user,
+          password: args.password as string || connectionConfig.password,
+          database: args.database as string || connectionConfig.database,
+        };
+        
+        await connectToDatabase(newConfig);
+        
+        return {
+          content: [{ 
+            type: "text", 
+            text: `Successfully connected to MySQL at ${newConfig.host}:${newConfig.port}, database: ${newConfig.database}` 
+          }],
+          isError: false,
+        };
+      }
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Tables list:\n${tableNames}`
-          }
-        ]
-      };
-    } catch (error: any) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: error.message
-          }
-        ]
-      };
-    }
-  }
-);
-
-// Register describe_table tool
-server.tool(
-  "describe_table",
-  "Get the structure of a specific table",
-  {
-    table: z.string().describe("Name of the table to describe")
-  },
-  async ({ table }) => {
-    try {
-      const structure = await dbManager.executeQuery(`DESCRIBE \`${table}\``);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `'${table}' table structure:\n${JSON.stringify(
-              structure,
-              null,
-              2
-            )}`
-          }
-        ]
-      };
-    } catch (error: any) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: error.message
-          }
-        ]
-      };
-    }
-  }
-);
-
-// Register list_databases tool
-server.tool(
-  "list_databases",
-  "Get a list of all accessible databases on the server",
-  {},
-  async () => {
-    try {
-      const databases = await dbManager.executeQuery("SHOW DATABASES");
-
-      const dbNames = databases.map((row: any) => row.Database).join("\n");
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Databases list:\n${dbNames}`
-          }
-        ]
-      };
-    } catch (error: any) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: error.message
-          }
-        ]
-      };
-    }
-  }
-);
-
-// Register use_database tool
-server.tool(
-  "use_database",
-  "Switch to a different database",
-  {
-    database: z.string().describe("Name of the database to switch to")
-  },
-  async ({ database }) => {
-    try {
-      const result = await dbManager.useDatabase(database);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: result
-          }
-        ]
-      };
-    } catch (error: any) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: error.message
-          }
-        ]
-      };
-    }
-  }
-);
-
-// Register set_readonly tool
-server.tool(
-  "set_readonly",
-  "Enable or disable read-only mode",
-  {
-    readonly: z
-      .boolean()
-      .describe("Set to true to enable read-only mode, false to disable")
-  },
-  async ({ readonly }) => {
-    dbManager.setReadonlyMode(readonly);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Read-only mode ${readonly ? "enabled" : "disabled"}`
+      case "disconnect": {
+        if (!connection) {
+          return {
+            content: [{ type: "text", text: "Not connected to any database" }],
+            isError: false,
+          };
         }
-      ]
+        
+        await connection.end();
+        connection = null;
+        
+        return {
+          content: [{ type: "text", text: "Successfully disconnected from database" }],
+          isError: false,
+        };
+      }
+
+      case "query": {
+        const conn = await getConnection();
+        const sql = request.params.arguments?.sql as string;
+        const params = request.params.arguments?.params as any[] || [];
+        
+        // Execute the query
+        const [rows] = await conn.query(sql, params);
+        
+        return {
+          content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+          isError: false,
+        };
+      }
+
+      case "list_tables": {
+        const conn = await getConnection();
+        
+        const [rows] = await conn.query(
+          "SHOW TABLES"
+        );
+        
+        return {
+          content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+          isError: false,
+        };
+      }
+
+      case "describe_table": {
+        const conn = await getConnection();
+        const tableName = request.params.arguments?.table as string;
+        
+        if (!tableName) {
+          return {
+            content: [{ type: "text", text: "Table name is required" }],
+            isError: true,
+          };
+        }
+        
+        const [rows] = await conn.query(
+          "DESCRIBE ??",
+          [tableName]
+        );
+        
+        return {
+          content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+          isError: false,
+        };
+      }
+
+      case "list_databases": {
+        const conn = await getConnection();
+        
+        const [rows] = await conn.query(
+          "SHOW DATABASES"
+        );
+        
+        return {
+          content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+          isError: false,
+        };
+      }
+
+      case "use_database": {
+        const conn = await getConnection();
+        const dbName = request.params.arguments?.database as string;
+        
+        if (!dbName) {
+          return {
+            content: [{ type: "text", text: "Database name is required" }],
+            isError: true,
+          };
+        }
+        
+        await conn.query("USE ??", [dbName]);
+        connectionConfig.database = dbName;
+        
+        return {
+          content: [{ type: "text", text: `Successfully switched to database: ${dbName}` }],
+          isError: false,
+        };
+      }
+
+      default:
+        throw new Error(`Unknown tool: ${request.params.name}`);
+    }
+  } catch (error) {
+    logger.error(`Error handling request: ${error}`);
+    return {
+      content: [{ 
+        type: "text", 
+        text: error instanceof Error ? error.message : "Unknown error occurred" 
+      }],
+      isError: true,
     };
   }
-);
+});
 
-
-// Start server
 async function main() {
-
+  logger.info("Starting MySQL MCP server...");
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  logger.info("Server connected to transport");
 }
 
-main().catch((error) => {
-  logDebug("Fatal error in main():", error);
+// Handle termination signals
+process.once("SIGTERM", () => {
+  logger.info("SIGTERM received, closing server");
+  
+  // Close database connection if open
+  if (connection) {
+    connection.end().catch(err => {
+      logger.error(`Error closing database connection: ${err}`);
+    });
+  }
+  
+  server.close().then(() => {
+    logger.info("Server closed, exiting");
+    process.exit(0);
+  });
+});
+
+process.once("SIGINT", () => {
+  logger.info("SIGINT received, closing server");
+  
+  // Close database connection if open
+  if (connection) {
+    connection.end().catch(err => {
+      logger.error(`Error closing database connection: ${err}`);
+    });
+  }
+  
+  server.close().then(() => {
+    logger.info("Server closed, exiting");
+    process.exit(0);
+  });
+});
+
+main().catch(error => {
+  logger.error(error instanceof Error ? error.message : "Unknown error occurred");
   process.exit(1);
 });
+
