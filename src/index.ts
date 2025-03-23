@@ -12,6 +12,29 @@ const logger = {
   error: (message: string) => console.error(`[ERROR] ${message}`),
   debug: (message: string) => console.debug(`[DEBUG] ${message}`)
 };
+// Load environment variables from .env file and command line arguments
+function loadEnvironmentVariables() {
+
+  // Parse command line arguments
+  const args = process.argv.slice(2);
+  const configIndex = args.findIndex(arg => arg === '--config');
+  
+  if (configIndex !== -1 && configIndex + 1 < args.length) {
+    try {
+      const config = JSON.parse(args[configIndex + 1]);
+      // Set environment variables from config
+      for (const [key, value] of Object.entries(config)) {
+        process.env[key] = value as string;
+      }
+      logger.info('Loaded configuration from command line arguments');
+    } catch (error) {
+      logger.error(`Failed to parse config JSON: ${error}`);
+    }
+  }
+}
+
+// Load environment variables before anything else
+loadEnvironmentVariables();
 
 // Global connection state
 let connection: Connection | null = null;
