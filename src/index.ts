@@ -75,6 +75,7 @@ const server = new Server(
     }
   }
 );
+connectToDatabase(connectionConfig);
 
 // Helper function to get current connection or throw error if not connected
 async function getConnection(): Promise<Connection> {
