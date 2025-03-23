@@ -13,7 +13,43 @@ const logger = {
   debug: (message: string) => console.debug(`[DEBUG] ${message}`)
 };
 
+// Query type enum for categorizing SQL operations
+enum QueryType {
+  SELECT = "SELECT",
+  INSERT = "INSERT",
+  UPDATE = "UPDATE",
+  DELETE = "DELETE",
+  CREATE = "CREATE",
+  DROP = "DROP",
+  ALTER = "ALTER",
+  TRUNCATE = "TRUNCATE",
+  USE = "USE",
+  SHOW = "SHOW",
+  DESCRIBE = "DESCRIBE",
+  UNKNOWN = "UNKNOWN"
+}
 
+// Determine if query type is a write operation
+function isWriteOperation(queryType: QueryType): boolean {
+  const writeOperations = [
+    QueryType.INSERT,
+    QueryType.UPDATE,
+    QueryType.DELETE,
+    QueryType.CREATE,
+    QueryType.DROP,
+    QueryType.ALTER,
+    QueryType.TRUNCATE
+  ];
+  return writeOperations.includes(queryType);
+}
+
+// Get query type from SQL query
+function getQueryType(query: string): QueryType {
+  const firstWord = query.trim().split(/\s+/)[0].toUpperCase();
+  return Object.values(QueryType).includes(firstWord as QueryType)
+    ? (firstWord as QueryType)
+    : QueryType.UNKNOWN;
+}
 
 // Global connection state
 let connection: Connection | null = null;
@@ -22,7 +58,8 @@ let connectionConfig = {
   port: parseInt(process.env.MYSQL_PORT || "3306", 10),
   user: process.env.MYSQL_USER || "root",
   password: process.env.MYSQL_PASSWORD || "",
-  database: process.env.MYSQL_DATABASE || ""
+  database: process.env.MYSQL_DATABASE || "",
+  readonly: process.env.MYSQL_READONLY === "true" || false
 };
 
 // Initialize MCP server
@@ -41,7 +78,9 @@ const server = new Server(
 // Helper function to get current connection or throw error if not connected
 async function getConnection(): Promise<Connection> {
   if (!connection) {
-    throw new Error("Database not connected. Use 'connect' tool first.");
+    throw new Error(
+      "Database not connected. Please use the 'connect' tool first."
+    );
   }
   return connection;
 }
@@ -74,6 +113,25 @@ async function connectToDatabase(
   }
 }
 
+// Validate query against readonly mode
+async function executeQuery(sql: string, params: any[] = []): Promise<any> {
+  const conn = await getConnection();
+
+  // Check if in readonly mode and validate query type
+  if (connectionConfig.readonly) {
+    const queryType = getQueryType(sql);
+    if (isWriteOperation(queryType)) {
+      throw new Error(
+        "Server is in read-only mode. Write operations are not allowed."
+      );
+    }
+  }
+
+  // Execute the query
+  const [rows] = await conn.query(sql, params);
+  return rows;
+}
+
 // Define available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
@@ -83,7 +141,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Check the current database connection status.",
         inputSchema: {
           type: "object",
-          properties: {}
+          properties: {
+            random_string: {
+              type: "string",
+              description: "Dummy parameter for no-parameter tools"
+            }
+          },
+          required: ["random_string"]
         }
       },
       {
@@ -111,7 +175,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Close the current MySQL database connection.",
         inputSchema: {
           type: "object",
-          properties: {}
+          properties: {
+            random_string: {
+              type: "string",
+              description: "Dummy parameter for no-parameter tools"
+            }
+          },
+          required: ["random_string"]
         }
       },
       {
@@ -135,7 +205,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Get a list of tables in the current database.",
         inputSchema: {
           type: "object",
-          properties: {}
+          properties: {
+            random_string: {
+              type: "string",
+              description: "Dummy parameter for no-parameter tools"
+            }
+          },
+          required: ["random_string"]
         }
       },
       {
@@ -157,7 +233,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Get a list of all accessible databases on the server.",
         inputSchema: {
           type: "object",
-          properties: {}
+          properties: {
+            random_string: {
+              type: "string",
+              description: "Dummy parameter for no-parameter tools"
+            }
+          },
+          required: ["random_string"]
         }
       },
       {
@@ -172,6 +254,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           },
           required: ["database"]
+        }
+      },
+      {
+        name: "set_readonly",
+        description: "Enable or disable read-only mode",
+        inputSchema: {
+          type: "object",
+          properties: {
+            readonly: {
+              type: "boolean",
+              description:
+                "Set to true to enable read-only mode, false to disable"
+            }
+          },
+          required: ["readonly"]
         }
       }
     ]
@@ -191,11 +288,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 text: JSON.stringify(
                   {
                     connected: false,
-                    message: "Database not connected. Need to use 'connect' tool after checking current environment variable information. The password is sensitive information and is stored in an environment variable, so it is not required in the request parameters.",
+                    message:
+                      "Database not connected. Need to use 'connect' tool after checking current environment variable information. The password is sensitive information and is stored in an environment variable, so it is not required in the request parameters.",
                     host: connectionConfig.host,
                     port: connectionConfig.port,
                     user: connectionConfig.user,
-                    database: connectionConfig.database
+                    database: connectionConfig.database,
+                    readonly: connectionConfig.readonly
                   },
                   null,
                   2
@@ -217,7 +316,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   port: connectionConfig.port,
                   user: connectionConfig.user,
                   database: connectionConfig.database,
-                  threadId: connection.threadId
+                  threadId: connection.threadId,
+                  readonly: connectionConfig.readonly
                 },
                 null,
                 2
@@ -237,26 +337,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ),
           user: (args.user as string) || connectionConfig.user,
           password: (args.password as string) || connectionConfig.password,
-          database: (args.database as string) || connectionConfig.database
+          database: (args.database as string) || connectionConfig.database,
+          readonly: connectionConfig.readonly // Maintain existing readonly setting
         };
 
         try {
           await connectToDatabase(newConfig);
         } catch (error) {
           return {
-            content: [{ type: "text", text: JSON.stringify(
+            content: [
               {
-                connected: false,
-                message: "Database connection failed, please request with new information or check the environment variable information.",
-                host: newConfig.host,
-                port: newConfig.port,
-                user: newConfig.user,
-                password: newConfig.password,
-                database: newConfig.database
-              },
-              null,
-              2
-            ) }],
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    connected: false,
+                    message:
+                      "Database connection failed, please request with new information or check the environment variable information."
+                  },
+                  null,
+                  2
+                )
+              }
+            ],
             isError: true
           };
         }
@@ -265,7 +367,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: "text",
-              text: `Successfully connected to MySQL at ${newConfig.host}:${newConfig.port}, database: ${newConfig.database}`
+              text: `Successfully connected to MySQL at ${newConfig.host}:${
+                newConfig.port
+              }, database: ${newConfig.database}, read-only mode: ${
+                newConfig.readonly ? "enabled" : "disabled"
+              }`
             }
           ],
           isError: false
@@ -285,90 +391,188 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         return {
           content: [
-            { type: "text", text: "Successfully disconnected from database" }
+            {
+              type: "text",
+              text: "Successfully disconnected from database"
+            }
           ],
           isError: false
         };
       }
 
       case "query": {
-        const conn = await getConnection();
-        const sql = request.params.arguments?.sql as string;
-        const params = (request.params.arguments?.params as any[]) || [];
+        try {
+          const sql = request.params.arguments?.sql as string;
+          const params = (request.params.arguments?.params as any[]) || [];
 
-        // Execute the query
-        const [rows] = await conn.query(sql, params);
+          // Execute query with validation
+          const rows = await executeQuery(sql, params);
 
-        return {
-          content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
-          isError: false
-        };
+          return {
+            content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+            isError: false
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred"
+              }
+            ],
+            isError: true
+          };
+        }
       }
 
       case "list_tables": {
-        const conn = await getConnection();
-
-        const [rows] = await conn.query("SHOW TABLES");
-
-        return {
-          content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
-          isError: false
-        };
+        try {
+          const rows = await executeQuery("SHOW TABLES");
+          return {
+            content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+            isError: false
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred"
+              }
+            ],
+            isError: true
+          };
+        }
       }
 
       case "describe_table": {
-        const conn = await getConnection();
-        const tableName = request.params.arguments?.table as string;
+        try {
+          const tableName = request.params.arguments?.table as string;
 
-        if (!tableName) {
+          if (!tableName) {
+            throw new Error("Table name is required");
+          }
+
+          const rows = await executeQuery("DESCRIBE ??", [tableName]);
+
           return {
-            content: [{ type: "text", text: "Table name is required" }],
+            content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+            isError: false
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred"
+              }
+            ],
             isError: true
           };
         }
-
-        const [rows] = await conn.query("DESCRIBE ??", [tableName]);
-
-        return {
-          content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
-          isError: false
-        };
       }
 
       case "list_databases": {
-        const conn = await getConnection();
-
-        const [rows] = await conn.query("SHOW DATABASES");
-
-        return {
-          content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
-          isError: false
-        };
-      }
-
-      case "use_database": {
-        const conn = await getConnection();
-        const dbName = request.params.arguments?.database as string;
-
-        if (!dbName) {
+        try {
+          const rows = await executeQuery("SHOW DATABASES");
           return {
-            content: [{ type: "text", text: "Database name is required" }],
+            content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+            isError: false
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred"
+              }
+            ],
             isError: true
           };
         }
+      }
 
-        await conn.query("USE ??", [dbName]);
-        connectionConfig.database = dbName;
+      case "use_database": {
+        try {
+          const dbName = request.params.arguments?.database as string;
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Successfully switched to database: ${dbName}`
-            }
-          ],
-          isError: false
-        };
+          if (!dbName) {
+            throw new Error("Database name is required");
+          }
+
+          await executeQuery("USE ??", [dbName]);
+          connectionConfig.database = dbName;
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Successfully switched to database: ${dbName}`
+              }
+            ],
+            isError: false
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred"
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+
+      case "set_readonly": {
+        try {
+          const readonly = request.params.arguments?.readonly as boolean;
+
+          if (readonly === undefined) {
+            throw new Error("readonly parameter is required");
+          }
+
+          connectionConfig.readonly = readonly;
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Read-only mode ${readonly ? "enabled" : "disabled"}`
+              }
+            ],
+            isError: false
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred"
+              }
+            ],
+            isError: true
+          };
+        }
       }
 
       default:
@@ -394,8 +598,6 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info("Server connected to transport");
-
-  // 데이터베이스 연결 추가
 }
 
 // Handle termination signals

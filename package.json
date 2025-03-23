@@ -1,6 +1,6 @@
 {
   "name": "mysql-mcp-connect",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MySQL MCP 서버 - Model Context Protocol로 MySQL 데이터베이스에 접근하는 도구",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -81,7 +81,8 @@ To use a locally developed version:
         "MYSQL_PORT": "3306",
         "MYSQL_USER": "root",
         "MYSQL_PASSWORD": "your_password",
-        "MYSQL_DATABASE": "your_database"
+        "MYSQL_DATABASE": "your_database",
+        "MYSQL_READONLY": "true"
       }
     }
   }
