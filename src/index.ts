@@ -307,17 +307,11 @@ server.tool(
   "connect",
   "Connect to a MySQL database",
   {
-    host: z
-      .string()
-      .default("localhost")
-      .describe("Database server hostname or IP address"),
-    port: z.string().default("3306").describe("Database server port"),
-    user: z.string().default("root").describe("Database username"),
-    password: z.string().default("").describe("Database password"),
-    database: z
-      .string()
-      .optional()
-      .describe("Database name to connect to (optional)")
+    host: dbManager.getConnectionInfo().host,
+    port: dbManager.getConnectionInfo().port,
+    user: dbManager.getConnectionInfo().user,
+    password: dbManager.getConnectionInfo().password,
+    database: dbManager.getConnectionInfo().database
   },
   async ({ host, port, user, password, database }) => {
     logDebug("Connect tool called with:", { host, port, user, database });
@@ -564,83 +558,12 @@ server.tool(
   }
 );
 
-// 환경 변수 처리 함수 - 다양한 소스에서 환경 변수를 로드
-function loadEnvironmentVariables() {
-  // 1. .env 파일 로드 (이미 위에서 dotenv.config()로 로드됨)
-
-  // 2. 커맨드라인 인자를 통한 설정
-  const args = process.argv.slice(2);
-  let configIndex = args.indexOf("--config");
-  if (configIndex !== -1 && args.length > configIndex + 1) {
-    try {
-      const config = JSON.parse(args[configIndex + 1]);
-      for (const [key, value] of Object.entries(config)) {
-        process.env[key] = String(value);
-        logDebug(`Setting env from CLI args: ${key}=${value}`);
-      }
-    } catch (error) {
-      logDebug("Failed to parse config argument:", error);
-    }
-  }
-
-  // 3. 직접 환경 변수 디버깅
-  logDebug("Final Environment Variables:", {
-    MYSQL_HOST: process.env.MYSQL_HOST,
-    MYSQL_PORT: process.env.MYSQL_PORT,
-    MYSQL_USER: process.env.MYSQL_USER,
-    MYSQL_PASSWORD: process.env.MYSQL_PASSWORD ? "[REDACTED]" : undefined,
-    MYSQL_DATABASE: process.env.MYSQL_DATABASE,
-    MYSQL_READONLY: process.env.MYSQL_READONLY
-  });
-}
 
 // Start server
 async function main() {
-  // 환경 변수 처리
-  loadEnvironmentVariables();
-
-  // Get default connection info from environment variables
-  const defaultHost = process.env.MYSQL_HOST;
-  const defaultUser = process.env.MYSQL_USER;
-  const defaultPassword = process.env.MYSQL_PASSWORD;
-  const defaultDatabase = process.env.MYSQL_DATABASE;
-  const defaultPort = process.env.MYSQL_PORT || "3306";
-  const defaultReadonly =
-    (process.env.MYSQL_READONLY || "false").toLowerCase() === "true";
-
-  logDebug("Using connection params:", {
-    host: defaultHost,
-    port: defaultPort,
-    user: defaultUser,
-    database: defaultDatabase || "none",
-    readonly: defaultReadonly
-  });
-
-  // Set readonly mode
-  dbManager.setReadonlyMode(defaultReadonly);
-
-  // Attempt auto-connection if environment variables are available
-  if (defaultHost && defaultUser !== undefined) {
-    try {
-      logDebug("Attempting auto-connection...");
-      await dbManager.connect({
-        host: defaultHost,
-        port: parseInt(defaultPort, 10),
-        user: defaultUser,
-        password: defaultPassword || "",
-        database: defaultDatabase
-      });
-      logDebug(`Automatically connected to MySQL(${defaultHost})`);
-    } catch (error) {
-      logDebug("Auto-connection failed:", error);
-    }
-  } else {
-    logDebug("Skipping auto-connection - missing required env variables");
-  }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logDebug("MySQL MCP Server running on stdio");
 }
 
 main().catch((error) => {
