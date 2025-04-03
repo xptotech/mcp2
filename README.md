@@ -1,5 +1,10 @@
 [![smithery badge](https://smithery.ai/badge/@sussa3007/mysql-mcp)](https://smithery.ai/server/@sussa3007/mysql-mcp)
 
+
+<a href="https://glama.ai/mcp/servers/@sussa3007/mysql-mcp">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@sussa3007/mysql-mcp/badge" />
+</a>
+
 # MySQL MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
